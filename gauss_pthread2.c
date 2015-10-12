@@ -9,27 +9,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <math.h>
 #include <sys/types.h>
 #include <sys/times.h>
 #include <sys/time.h>
 #include <time.h>
+#include <pthread.h>
 
 /* Program Parameters */
 #define MAXN 2000  /* Max value of N */
-/* Number of Threads*/
-#define NUM_THREADS 5
 int N;  /* Matrix size */
 
+#define NUM_THREADS 5
 /* Matrices and vectors */
 volatile float A[MAXN][MAXN], B[MAXN], X[MAXN];
 /* A * X = B, solve for X */
-
-/*struct for the parameter to the parallel function */
 typedef struct DataSet{
-    int index; /*index of the slice for threads;*/
-    int norm;  /*start of each slice */
+    int index;
+    int norm;
+    int row;
+    float multiplier;
 }DataSet;
 /* junk */
 #define randm() 4|2[uid]&3
@@ -40,9 +39,7 @@ void gauss();  /* The function you will provide.
 		* It is called only on the parent.
 		*/
 
-/* The function each thread will execute */
 void *thread_work(void *argument);
-
 /* returns a seed for srand based on the time */
 unsigned int time_seed() {
   struct timeval t;
@@ -191,31 +188,31 @@ int main(int argc, char **argv) {
  * defined in the beginning of this code.  X[] is initialized to zeros.
  */
 void gauss() {
-    /*
-     *  As we have known, the gaussian elimination stage of the algorithm comprises (n-1) steps;
-     *  We can not parallel these n-1 steps since each step have the loop-dependency;
-     *  We can only parallel on the variable row and variable col;
-     *  Here choose the variable row for a better efficiency.
-     */
-    int norm, row, col; /* Normalization row, and zeroing
+  int norm, row,col;  /* Normalization row, and zeroing
 			* element row and col */
-    DataSet *data;
+  float multiplier;
+  int index;
+  DataSet *data;
 
-    printf("Computing Serially.\n");
+  pthread_t threads[NUM_THREADS];
+  printf("Computing Serially.\n");
 
   /* Gaussian elimination */
-    pthread_t threads[NUM_THREADS];
-    int index;
     for (norm = 0; norm < N - 1; norm++) {
-        for (index = 0; index < NUM_THREADS; index++) {
-            /* Pass the parameters: norm and index to the thread_work function */
-            data = (DataSet *)malloc(sizeof(DataSet));
-            data->index = index;
-            data->norm = norm;
-            pthread_create(&threads[index],NULL,thread_work,data);
-        }
-        for (index = 0; index < NUM_THREADS; index++) {
-            pthread_join(threads[index],NULL);
+        for (row = norm + 1; row < N; row++) {
+            multiplier = A[row][norm] / A[norm][norm];
+            for (index = 0; index<NUM_THREADS;index++) {
+                data = (DataSet *)malloc(sizeof(DataSet));
+                data->index = index;
+                data->norm = norm;
+                data->row = row;
+                data->multiplier = multiplier;
+                pthread_create(&threads[index],NULL,thread_work,data);
+            }
+            for (index = 0; index<NUM_THREADS;index++) {
+                pthread_join(threads[index],NULL);
+            }
+            B[row] -= B[norm] * multiplier;
         }
     }
   /* (Diagonal elements are not normalized to 1.  This is treated in back
@@ -234,35 +231,21 @@ void gauss() {
 }
 
 void *thread_work(void *argument) {
-    /*
-     *  In the function, eliminates nonzero subdiagonal elements in column i
-     *  by subtracting the ith row from row j in the range[i+1,N]
-     *  Each thread will execte (N-(i+1))/NUM_THREAS parts of computation
-     */
-
-    int index,norm;
-    int row,col;
-    int from,to,slice;
+    int start,norm,row,to;
+    int slice,index;
     float multiplier;
-
-    /* store the arguments */
     DataSet *data;
     data = ((DataSet *)argument);
-    index = data->index;
     norm = data->norm;
+    row = data->row;
+    index = data->index;
+    multiplier = data->multiplier;
+    slice = (N-norm)%NUM_THREADS == 0?(N-norm)/NUM_THREADS:(N-norm)/NUM_THREADS+1;
+    to = (N<=norm +(index+1)*slice)?N:norm+(index+1)*slice;
+    
 
-    /* the slice length */
-    slice = (N-1-norm)%NUM_THREADS == 0 ? (N-1-norm)/NUM_THREADS:(N-1-norm)/NUM_THREADS+1;
-    /* The beginning of the slice and the end of the slice */
-    from = norm+1+index*slice;
-    to = (N <= norm+1+(index+1)*slice)?N:norm+1+(index+1)*slice;
-
-    for (row =from; row < to; row++){
-        multiplier = A[row][norm] / A[norm][norm];
-        for ( col = norm; col < N; col++) {
-            A[row][col] -= A[norm][col] * multiplier;
-        }
-        B[row] -= B[norm] * multiplier;
+    for (start =norm+index*slice; start < to; start++) {
+        A[row][start] -= A[norm][start] * multiplier;
     }
     pthread_exit(0);
 }

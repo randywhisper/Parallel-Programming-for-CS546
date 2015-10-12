@@ -181,6 +181,12 @@ int main(int argc, char **argv) {
  * defined in the beginning of this code.  X[] is initialized to zeros.
  */
 void gauss() {
+   /*  
+    *  As we have known, the gaussian elimination stage of the algorithm comprises (n-1) steps;
+    *  We can not parallel these n-1 steps since each step have the loop-dependency;
+    *  We can only parallel on the variable row and variable col;
+    *  Here choose the variable row for a better efficiency.
+    */
   int norm, row, col;  /* Normalization row, and zeroing
 			* element row and col */
   float multiplier;
@@ -189,8 +195,7 @@ void gauss() {
 
   /* Gaussian elimination */
     for (norm = 0; norm < N - 1; norm++) {
-    #pragma omp parallel num_threads(4) private(row,col,multiplier) shared(norm,N)
-    #pragma opm for
+    #pragma omp parallel for num_threads(5) private(row,col,multiplier) shared(norm,N)
         for (row = norm + 1; row < N; row++) {
             multiplier = A[row][norm] / A[norm][norm];
             for (col = norm; col < N; col++) {
